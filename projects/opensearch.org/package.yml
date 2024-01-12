@@ -9,16 +9,76 @@ versions:
 
 dependencies:
   openjdk.org: '*'
+  openmp.llvm.org: '*'
+
 
 build:
   dependencies:
+    cmake.org: "*"
+    git-scm.org: "*"
+    gnu.org/wget: "*"
     gradle.org: '*'
+    openjdk.org: ^17
   script:
     - gradle -Dbuild.snapshot=false ":distribution:archives:no-jdk-{{hw.platform}}-tar:assemble"
     - mkdir -p "{{prefix}}"
     - tar --strip-components=1 -xf distribution/archives/no-jdk-{{hw.platform}}-tar/build/distributions/opensearch-*.tar.gz -C "{{prefix}}"
     - run: |
         sed -i 's|#\s*cluster.name: .*|cluster.name: opensearch_pkgx|' "{{prefix}}/config/opensearch.yml"
+    - run: |
+        # checkout k-NN plugin
+        mkdir -p k-NN
+        cd k-NN
+        if [ -d .git ]; then
+          git fetch
+        else
+          git clone https://github.com/opensearch-project/k-NN .
+        fi
+        git checkout {{version}}.0
+        git reset --hard
+        git submodule foreach --recursive git reset --hard
+        git submodule update --init --recursive
+    - run: |
+        # workarounds for m1 build. see: https://github.com/opensearch-project/k-NN/blob/main/DEVELOPER_GUIDE.md#extra-setup-for-mac-m1-machines
+
+        # this build will fail, but it doesn't matter, just need it to setup for the next bit
+        ./gradlew build || true
+
+        IFS=:
+        for p in ${LD_LIBRARY_PATH}; do
+          if [ -e "${p}/libomp.dylib" ]; then
+            libomp_path="${p}/.."
+            break
+          fi
+        done
+        [ -z "${libomp_path}" ] && echo "libomp.dylib not found" && exit 1
+
+        cd jni
+        sed -i -e "s|/usr/local/opt/libomp/|${libomp_path}/|g" CMakeLists.txt
+        sed -i -e 's/-march=native/-mcpu=apple-m1/g' external/nmslib/similarity_search/CMakeLists.txt
+        sed -i -e 's/pragma message WARN/pragma message /g' external/nmslib/similarity_search/src/distcomp_scalar.cc
+        sed -i -e 's/-mcpu=apple-a14/-mcpu=apple-m1/g' external/nmslib/python_bindings/setup.py
+        sed -i -e 's/__aarch64__/__undefine_aarch64__/g' external/faiss/faiss/utils/distances_simd.cpp
+
+        export CC=clang
+        export CXX=clang++
+        cmake . --fresh
+        make
+        cd ..
+      if: darwin/aarch64
+    # this is recommended in https://github.com/opensearch-project/k-NN/blob/45e9e542aef60ef7073ee726e6ac14dec27bfa04/scripts/build.sh#L91-L94
+    - run: sed -i -e 's/-march=native/-march=x86-64/g' ./jni/external/nmslib/similarity_search/CMakeLists.txt
+      if: x86-64
+    -  run: |
+        ./gradlew build --refresh-dependencies -x integTest -x test -DskipTests=true -Dopensearch.version={{version}} -Dbuild.snapshot=false -Dbuild.version_qualifier=
+        ./gradlew publishPluginZipPublicationToZipStagingRepository -Dopensearch.version={{version}} -Dbuild.snapshot=false -Dbuild.version_qualifier=
+        ./gradlew publishPluginZipPublicationToMavenLocal -Dbuild.snapshot=false -Dbuild.version_qualifier= -Dopensearch.version={{version}}
+        mkdir -p ./build/distributions/lib
+        cp -v ./jni/release/libopensearchknn* ./build/distributions/lib
+        cd ./build/distributions
+        zip -r opensearch-knn-{{version}}.0.zip lib/
+        {{prefix}}/bin/opensearch-plugin install --batch file:`pwd`/opensearch-knn-{{version}}.0.zip
+
 
 provides:
   - bin/opensearch
