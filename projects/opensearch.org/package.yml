@@ -30,6 +30,7 @@ test:
   dependencies:
      gnu.org/coreutils: ^9
      stedolan.github.io/jq: "*"
+     curl.se: "*"
   script: |
     opensearch-plugin list
 
