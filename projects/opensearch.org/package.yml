@@ -78,7 +78,8 @@ build:
         cd ./build/distributions
         zip -r opensearch-knn-{{version}}.0.zip lib/
         {{prefix}}/bin/opensearch-plugin install --batch file:`pwd`/opensearch-knn-{{version}}.0.zip
-
+    - run: |
+        echo 'export OPENSEARCH_JAVA_OPTS="-Djava.library.path=$OPENSEARCH_HOME/plugins/opensearch-knn/lib $OPENSEARCH_JAVA_OPTS"' >> {{prefix}}/bin/opensearch-env
 
 provides:
   - bin/opensearch
@@ -108,6 +109,42 @@ test:
         for i in $(seq 1 30); do
           curl -k --silent --fail http://localhost:$PORT/ > output.txt && break || sleep 1
         done
-        kill $pid
         test "$(jq .version.number output.txt)" = \"{{version}}\"
+        curl --fail -XPUT http://localhost:$PORT/my-test-knn-index -H 'Content-Type: application/json' -d '
+          {
+            "settings": {
+              "index.knn": true
+            },
+            "mappings": {
+              "properties": {
+                "my_vector1": {
+                  "type": "knn_vector",
+                  "dimension": 2
+                },
+                "my_vector2": {
+                  "type": "knn_vector",
+                  "dimension": 4
+                }
+              }
+            }
+          }'
+        curl --fail -XPUT http://localhost:$PORT/my-test-knn-index/_doc/1?refresh=true -H 'Content-Type: application/json' -d '
+          {
+            "my_vector1": [1, 2],
+            "my_vector2": [1, 2, 3, 4]
+          }'
+
+        curl --fail -XPOST http://localhost:$PORT/my-test-knn-index/_search -H 'Content-Type: application/json' -d '
+          {
+            "query": {
+              "knn": {
+                "my_vector1": {
+                  "vector": [1, 2],
+                  "k": 1
+                }
+              }
+            }
+          }' > output.txt
+        kill $pid
+        test "$(jq .hits.total.value output.txt)" = 1
       if: darwin
