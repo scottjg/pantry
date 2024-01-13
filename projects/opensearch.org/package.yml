@@ -18,6 +18,7 @@ build:
     git-scm.org: "*"
     gnu.org/wget: "*"
     gradle.org: '*'
+    gnu.org/gcc: '*' # for gfortran
     openjdk.org: ^17
   script:
     - gradle -Dbuild.snapshot=false ":distribution:archives:no-jdk-{{hw.platform}}-tar:assemble"
