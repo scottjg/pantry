@@ -10,7 +10,7 @@ versions:
 dependencies:
   openjdk.org: '*'
   openmp.llvm.org: '*'
-
+  openblas.net: "*"
 
 build:
   dependencies:
@@ -73,6 +73,15 @@ build:
         ./gradlew build --refresh-dependencies -x integTest -x test -DskipTests=true -Dopensearch.version={{version}} -Dbuild.snapshot=false -Dbuild.version_qualifier=
         ./gradlew publishPluginZipPublicationToZipStagingRepository -Dopensearch.version={{version}} -Dbuild.snapshot=false -Dbuild.version_qualifier=
         ./gradlew publishPluginZipPublicationToMavenLocal -Dbuild.snapshot=false -Dbuild.version_qualifier= -Dopensearch.version={{version}}
+    -  run: |
+        cd jni
+        cmake . --fresh
+        make
+        cd ..
+       if:
+         - linux
+         - darwin/x86-64
+    -  run: |
         mkdir -p ./build/distributions/lib
         cp -v ./jni/release/libopensearchknn* ./build/distributions/lib
         cd ./build/distributions
